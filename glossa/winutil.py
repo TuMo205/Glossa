@@ -129,6 +129,25 @@ def keep_mta_alive() -> None:
         pass
 
 
+def hard_exit(code: int) -> None:
+    """Kết thúc tiến trình ngay (sau khi đã lưu mọi thứ). Bỏ qua bước Windows gỡ từng thư viện lúc thoát -
+    bước đó có thể làm sập khi thư viện OCR của Windows còn đối tượng đang sống."""
+    for s in (sys.stdout, sys.stderr):
+        try:
+            s.flush()
+        except Exception:
+            pass
+    if IS_WIN:
+        try:
+            k = ctypes.WinDLL("kernel32", use_last_error=True)
+            k.GetCurrentProcess.restype = wintypes.HANDLE
+            k.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+            k.TerminateProcess(k.GetCurrentProcess(), int(code) & 0xFFFFFFFF)
+        except Exception:
+            pass
+    os._exit(code)
+
+
 def com_init_mta() -> None:
     """Khởi tạo COM kiểu MTA cho luồng hiện tại (cần cho Windows OCR)."""
     if not IS_WIN:

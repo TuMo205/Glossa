@@ -265,7 +265,7 @@ def _main(cli: bool) -> int:
     app.controller.shutdown()
     log.info("Thoát (%s)", code)
     logging.shutdown()
-    os._exit(code)  # không để Python dọn dẹp khi còn luồng nền trong mã C (OCR) => tránh sập lúc thoát
+    winutil.hard_exit(code)  # không để Python/Windows dọn dẹp khi đối tượng OCR (mã C) còn sống
 
 
 if __name__ == "__main__":

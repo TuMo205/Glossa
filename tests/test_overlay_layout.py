@@ -210,6 +210,16 @@ def test_bold_detection(qapp):
         a = np.frombuffer(img.constBits(), np.uint8, count=img.bytesPerLine() * 60).reshape(60, -1, 4)
         return a[:, :600].copy()
 
+    from PySide6.QtGui import QFontMetrics
+
+    def width(b):
+        f = QFont("Segoe UI" if sys.platform == "win32" else "DejaVu Sans")
+        f.setPixelSize(32)
+        f.setBold(b)
+        return QFontMetrics(f).horizontalAdvance("Welcome to the screen")
+
+    if width(True) <= width(False):  # vd Qt offscreen trên Windows: không có phông thật, chỉ vẽ ô vuông
+        pytest.skip("môi trường không có phông chữ thật để vẽ chữ đậm")
     reg, bold = render(False), render(True)
     box, bg, fg = (8, 10, 420, 52), (255, 255, 255), (20, 20, 20)
     assert stroke_ratio(bold, box, bg, fg, 32) > stroke_ratio(reg, box, bg, fg, 32)
