@@ -101,6 +101,10 @@ class HotkeyThread(threading.Thread):
     def wait_ready(self, timeout: float = 2.0) -> None:
         self._ready.wait(timeout)
 
-    def stop(self) -> None:
-        if IS_WIN and self._tid:
-            ctypes.windll.user32.PostThreadMessageW(self._tid, WM_QUIT, 0, 0)
+    def stop(self, join: float = 0.0) -> None:
+        if IS_WIN and self.is_alive():
+            self._ready.wait(1.0)  # chưa tạo xong hàng đợi tin nhắn thì WM_QUIT bị mất
+            if self._tid:
+                ctypes.windll.user32.PostThreadMessageW(self._tid, WM_QUIT, 0, 0)
+        if join and self.is_alive():
+            self.join(join)

@@ -80,7 +80,7 @@ def step_test() -> None:
         say("test.txt", "Bỏ qua: chưa cài pytest (python -m pip install pytest)")
         return
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
-    rc = run([sys.executable, "-m", "pytest", "-q", "-rf", "--tb=short", "-p", "no:cacheprovider"], "test.txt",
+    rc = run([sys.executable, "-m", "pytest", "-v", "-rf", "--tb=short", "-p", "no:cacheprovider"], "test.txt",
              check=False, env=env, timeout=900)
     if rc != 0:
         say("summary.txt", f"CẢNH BÁO: có kiểm thử lỗi (mã {rc}) - xem test.txt")
@@ -140,21 +140,23 @@ def step_smoke() -> None:
     if rc == 3:
         say(log, "CẢNH BÁO: không gọi được Windows OCR trên máy build")
 
-    p = subprocess.Popen([exe], env=env)
-    time.sleep(15)
-    alive = p.poll() is None
-    if alive:
-        p.terminate()
-        try:
-            p.wait(10)
-        except subprocess.TimeoutExpired:
-            p.kill()
+    # mở giao diện thật (OCR, dịch, lớp phủ) 15 giây rồi tự thoát như khi bấm Kết thúc
+    p = subprocess.Popen([exe], env=dict(env, GLOSSA_AUTOQUIT_S="15"))
+    try:
+        rc = p.wait(60)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        rc = None
     text = _read(app_log)
+    say(log, f"chạy giao diện 15 giây: mã thoát {rc}")
     say(log, "---- nhật ký khi chạy thử ----\n" + text[-6000:])
-    if not alive:
-        raise StepError(f"Glossa.exe tự tắt sau khi mở (mã {p.returncode})")
     if "Khởi động Glossa" not in text:
-        raise StepError("Glossa.exe chạy nhưng không ghi nhật ký khởi động")
+        raise StepError("Glossa.exe không ghi nhật ký khởi động")
+    if rc is None:
+        raise StepError("Glossa.exe không tự thoát được (treo khi đóng)")
+    if rc != 0 or "Thoát (0)" not in text:
+        raise StepError(f"Glossa.exe thoát bất thường (mã {rc}, {rc & 0xFFFFFFFF:#x})" if rc else
+                        "Glossa.exe thoát mà không qua bước đóng chương trình")
     if "CRITICAL" in text:
         say(log, "CẢNH BÁO: có lỗi CRITICAL trong nhật ký (xem trên)")
     say(log, "OK: chạy thử thành công")

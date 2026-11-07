@@ -299,6 +299,10 @@ class Translator:
         self._thread = threading.Thread(target=self._run, name="translator", daemon=True)
         self._thread.start()
 
+    @property
+    def thread(self):
+        return getattr(self, "_thread", None)
+
     def stop(self) -> None:
         with self._cv:
             self._stop = True
@@ -380,8 +384,9 @@ class Translator:
                     for t in batch:
                         self._pending.setdefault(t, now)
                 backoff = min(30.0, backoff * 2 if backoff else 2.0)
-                if self.on_error:
-                    self.on_error(self.last_error)
+                cb = self.on_error
+                if cb:
+                    cb(self.last_error)
                 with self._cv:
                     if not self._stop:
                         self._cv.wait(backoff)
@@ -392,8 +397,9 @@ class Translator:
                 self.cache.put(src, val)
             with self._cv:
                 self._inflight.difference_update(batch)
-            if self.on_update:
-                self.on_update()
+            cb = self.on_update
+            if cb:
+                cb()
 
     # -- dịch đồng bộ --
     def translate_now(self, texts: list) -> dict:

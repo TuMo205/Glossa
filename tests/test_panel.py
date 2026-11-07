@@ -111,3 +111,12 @@ def test_tray_menu_is_unikey_like(ctl):
     assert texts[0] == "Bảng điều khiển…" and ctl.menu.defaultAction().text().startswith("Bảng điều khiển")
     assert texts[-1] == "Kết thúc"
     assert "Công cụ" in texts and "Bật dịch tiếng Việt" in texts
+
+
+def test_quit_stops_background_threads(ctl, qapp):
+    """Thoát phải dừng hẳn luồng OCR/dịch/phím tắt, không để chúng phát tín hiệu vào đối tượng đã huỷ."""
+    ctl.quit()
+    assert not ctl.engine.is_alive() and not ctl.translator.thread.is_alive()
+    assert not ctl.hotkeys.is_alive() and ctl.sink.closed
+    ctl.sink.status({"x": 1})   # sau khi đóng: im lặng, không lỗi
+    ctl.quit()                  # gọi lại không sao

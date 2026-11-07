@@ -28,6 +28,9 @@ from .translator import PROVIDER_NAMES, TARGETS, TranslationCache, Translator
 
 log = logging.getLogger(__name__)
 
+# Bridge không bao giờ bị huỷ: luồng nền (OCR, dịch, phím tắt) có thể còn phát tín hiệu thêm một nhịp
+# sau khi Controller đóng; phát tín hiệu từ đối tượng Qt đã huỷ làm chương trình sập (access violation).
+_BRIDGES: list = []
 
 
 class Bridge(QObject):
@@ -44,29 +47,40 @@ class Bridge(QObject):
 
 
 class Sink:
-    """Đầu ra của Engine (được gọi từ luồng engine)."""
+    """Đầu ra của Engine (được gọi từ luồng engine). Sau close() thì im lặng."""
 
     def __init__(self, bridge: Bridge):
         self.b = bridge
         self.hidden = threading.Event()
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+        self.hidden.set()
 
     def blocks(self, overlay_key, target_key, blocks):
-        self.b.blocks.emit(overlay_key, target_key, blocks)
+        if not self.closed:
+            self.b.blocks.emit(overlay_key, target_key, blocks)
 
     def ocr_info(self, info):
-        self.b.ocr_info.emit(info)
+        if not self.closed:
+            self.b.ocr_info.emit(info)
 
     def status(self, st):
-        self.b.status.emit(st)
+        if not self.closed:
+            self.b.status.emit(st)
 
     def hide_for_capture(self):
+        if self.closed:
+            return
         self.hidden.clear()
         self.b.hide_req.emit()
         self.hidden.wait(0.6)
         time.sleep(0.045)  # chờ DWM vẽ lại khung hình
 
     def show_after_capture(self):
-        self.b.show_req.emit()
+        if not self.closed:
+            self.b.show_req.emit()
 
 
 class Controller(QObject):
@@ -93,6 +107,8 @@ class Controller(QObject):
             if n:
                 log.info("Đã nạp %d bản dịch đã nhớ", n)
         self.bridge = b = Bridge()
+        _BRIDGES.append(b)
+        self._shut = False
         self.translator = Translator(self.cache, cfg.get("target_lang", "vi"), cfg.get("provider", "google"),
                                      on_update=b.translated.emit, on_error=b.tr_error.emit)
         self.sink = Sink(b)
@@ -341,8 +357,7 @@ class Controller(QObject):
     def set_hotkeys(self, new: dict) -> list:
         """Đổi phím tắt ngay khi đang chạy. Trả về các phím không đăng ký được."""
         self.cfg.set("hotkeys", dict(new))
-        self.hotkeys.stop()
-        self.hotkeys.join(1.0)
+        self.hotkeys.stop(join=1.5)
         self.hotkeys = HotkeyThread(self.hotkey_map(), self.bridge.hotkey.emit)
         self.hotkeys.start()
         self.hotkeys.wait_ready(2.0)
@@ -508,14 +523,29 @@ class Controller(QObject):
             pass
         self._osd("Đã xoá bộ nhớ bản dịch")
 
-    def quit(self) -> None:
+    def shutdown(self) -> None:
+        """Lưu bộ nhớ, dừng hẳn các luồng nền, đóng lớp phủ. Gọi nhiều lần không sao."""
+        if self._shut:
+            return
+        self._shut = True
+        self._save_timer.stop()
         self.save_cache()
+        self.sink.close()
+        self.translator.on_update = self.translator.on_error = None
         self.engine.stop()
         self.translator.stop()
         self.hotkeys.stop()
+        for t, sec in ((self.engine, 3.0), (self.translator.thread, 1.0), (self.hotkeys, 1.5)):
+            if t is not None and t.is_alive():
+                t.join(sec)
+                if t.is_alive():
+                    log.warning("Luồng %s chưa dừng kịp", t.name)
         for ov in self.overlays.values():
             ov.close()
         self.tray.hide()
+
+    def quit(self) -> None:
+        self.shutdown()
         self.app.quit()
 
     # ------------------------------------------------------------ tín hiệu nền

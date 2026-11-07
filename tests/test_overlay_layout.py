@@ -1,5 +1,7 @@
 """Kiểm thử bố trí bản dịch: đúng cỡ chữ gốc, cỡ đồng đều, không giật."""
 
+import sys
+
 import pytest
 
 from glossa.engine import RenderBlock
@@ -198,7 +200,7 @@ def test_bold_detection(qapp):
         img = QImage(600, 60, QImage.Format.Format_RGB32)
         img.fill(QColor(255, 255, 255))
         p = QPainter(img)
-        f = QFont("DejaVu Sans")
+        f = QFont("Segoe UI" if sys.platform == "win32" else "DejaVu Sans")
         f.setPixelSize(32)
         f.setBold(bold)
         p.setFont(f)

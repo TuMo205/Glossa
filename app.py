@@ -255,9 +255,17 @@ def _main(cli: bool) -> int:
 
     log.info("Khởi động Glossa %s (%s), dữ liệu: %s", __version__, sys.executable, paths.DATA_DIR)
     app.controller = Controller(app, cfg, paths.launch_command_line())  # giữ tham chiếu
+    app.aboutToQuit.connect(app.controller.shutdown)  # cả khi Windows đăng xuất / tắt máy
+    autoquit = os.environ.get("GLOSSA_AUTOQUIT_S")  # chỉ dùng khi chạy thử tự động (build)
+    if autoquit:
+        from PySide6.QtCore import QTimer
+
+        QTimer.singleShot(int(float(autoquit) * 1000), app.controller.quit)
     code = app.exec()
+    app.controller.shutdown()
     log.info("Thoát (%s)", code)
-    return code
+    logging.shutdown()
+    os._exit(code)  # không để Python dọn dẹp khi còn luồng nền trong mã C (OCR) => tránh sập lúc thoát
 
 
 if __name__ == "__main__":
