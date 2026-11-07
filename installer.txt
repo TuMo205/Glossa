@@ -1,0 +1,4 @@
+> C:\ProgramData\Chocolatey\bin\iscc.EXE /DAppVersion=2.0.2 /Qp D:\a\Glossa\Glossa\packaging\Glossa.iss
+
+
+PreprocessingOK: D:\a\Glossa\Glossa\dist\Glossa-Setup-2.0.2.exe (33.8 MB)

@@ -1,0 +1,13 @@
+--check-imports: mã 0
+2026-11-07 15:48:32,853 INFO [MainThread] app: check-imports: OK
+
+--check-ocr: mã 0 (0 = có OCR, 2 = máy chưa cài gói OCR, 3 = không gọi được Windows OCR)
+chạy giao diện 15 giây: mã thoát 0
+---- nhật ký khi chạy thử ----
+2026-11-07 15:48:32,853 INFO [MainThread] app: check-imports: OK
+2026-11-07 15:48:33,229 INFO [MainThread] app: check-ocr: ['en-US']
+2026-11-07 15:48:33,666 INFO [MainThread] app: Khởi động Glossa 2.0.2 (D:\a\Glossa\Glossa\dist\Glossa\Glossa.exe), dữ liệu: D:\a\Glossa\Glossa\build\smoke-home
+2026-11-07 15:48:33,746 INFO [engine] glossa.ocr_windows: OCR: có ['en-US']; dùng ['en-US']; ảnh tối đa 10000 px
+2026-11-07 15:48:48,728 INFO [MainThread] app: Thoát (0)
+
+OK: chạy thử thành công

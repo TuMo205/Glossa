@@ -1,0 +1,6 @@
+> C:\hostedtoolcache\windows\Python\3.13.17\x64\python.exe -m PyInstaller --noconfirm --clean --log-level WARN --distpath D:\a\Glossa\Glossa\dist --workpath D:\a\Glossa\Glossa\build\pyinstaller D:\a\Glossa\Glossa\packaging\Glossa.spec
+144 INFO: PyInstaller: 6.22.3, contrib hooks: 2026.9
+145 INFO: Python: 3.13.17
+164 INFO: Platform: Windows-2025Server-10.0.26100-SP0
+164 INFO: Python environment: C:\hostedtoolcache\windows\Python\3.13.17\x64
+OK: D:\a\Glossa\Glossa\dist\Glossa (116 MB)

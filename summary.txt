@@ -1,0 +1,9 @@
+Glossa 2.0.2 - Python 3.13.17 - win32
+[OK] test (4 s)
+[OK] icon (0 s)
+[OK] exe (41 s)
+[OK] smoke (17 s)
+[OK] installer (20 s)
+[OK] portable (12 s)
+[OK] checksums (0 s)
+[OK] release v2.0.2

@@ -1,0 +1,2 @@
+> C:\hostedtoolcache\windows\Python\3.13.17\x64\python.exe -c "import sys; sys.path.insert(0, r'D:\a\Glossa\Glossa'); from PySide6.QtGui import QGuiApplication; app = QGuiApplication([]); from glossa.icons import save_ico; sys.exit(0 if save_ico(r'D:\a\Glossa\Glossa\build\glossa.ico') else 1)"
+OK: D:\a\Glossa\Glossa\build\glossa.ico (117150 byte)
