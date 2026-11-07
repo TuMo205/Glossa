@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+build/
+dist/
+ci-logs/
+logs/
+cache/
+config.json
+config.json.tmp
+glossa.ico

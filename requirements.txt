@@ -1,0 +1,11 @@
+PySide6-Essentials>=6.7,<7
+numpy>=1.26
+mss>=9.0
+requests>=2.31
+winrt-runtime>=2.2,<5; sys_platform == "win32"
+winrt-Windows.Foundation>=2.2,<5; sys_platform == "win32"
+winrt-Windows.Foundation.Collections>=2.2,<5; sys_platform == "win32"
+winrt-Windows.Globalization>=2.2,<5; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging>=2.2,<5; sys_platform == "win32"
+winrt-Windows.Media.Ocr>=2.2,<5; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=2.2,<5; sys_platform == "win32"

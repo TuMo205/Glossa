@@ -1,0 +1,86 @@
+# Build Glossa cho Windows mỗi khi có thay đổi trên nhánh main:
+# kiểm thử -> Glossa.exe (PyInstaller) -> chạy thử -> bộ cài (Inno Setup) + bản di động -> trang Releases.
+# Nhật ký các bước được đẩy lên nhánh ci-logs để xem lại khi có lỗi.
+name: Build Windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller pytest
+          New-Item -ItemType Directory -Force ci-logs | Out-Null
+          python -m pip freeze | Out-File -Encoding utf8 ci-logs/pip-freeze.txt
+
+      - name: Install Inno Setup
+        continue-on-error: true
+        run: choco install innosetup -y --no-progress
+
+      - name: Test, build, smoke test, package
+        run: python packaging/build.py
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Glossa-build-${{ github.run_number }}
+          path: |
+            dist/*.exe
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: ignore
+
+      - name: Publish release
+        if: success() && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER=$(python packaging/build.py version | tr -d "\r")
+          TAG="v$VER"
+          FILES="dist/Glossa-Setup-$VER.exe dist/Glossa-Portable-$VER.zip dist/SHA256SUMS.txt"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" $FILES --clobber
+          else
+            gh release create "$TAG" $FILES --target "$GITHUB_SHA" --title "Glossa $VER" \
+              --notes-file packaging/RELEASE_NOTES.md --latest
+          fi
+          echo "[OK] release $TAG" >> ci-logs/summary.txt
+
+      - name: Save logs to ci-logs branch
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p ci-logs
+          echo "run ${{ github.run_number }} | commit ${{ github.sha }} | status ${{ job.status }}" > ci-logs/STATUS.txt
+          cd ci-logs
+          git init -q -b ci-logs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "CI logs, run ${{ github.run_number }}"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ci-logs
