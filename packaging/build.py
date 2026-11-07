@@ -84,6 +84,8 @@ def step_test() -> None:
              check=False, env=env, timeout=900)
     if rc != 0:
         say("summary.txt", f"CẢNH BÁO: có kiểm thử lỗi (mã {rc}) - xem test.txt")
+        with open(os.path.join(LOGS, "TESTS_FAILED"), "w", encoding="utf-8") as f:
+            f.write(str(rc))
 
 def step_icon() -> None:
     """build/glossa.ico - biểu tượng chữ V đỏ (vẽ bằng Qt, giống biểu tượng ở khay hệ thống)."""

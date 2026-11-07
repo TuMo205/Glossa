@@ -63,13 +63,15 @@ jobs:
           VER=$(python packaging/build.py version | tr -d "\r")
           TAG="v$VER"
           FILES="dist/Glossa-Setup-$VER.exe dist/Glossa-Portable-$VER.zip dist/SHA256SUMS.txt"
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" $FILES --clobber
+          if [ -f ci-logs/TESTS_FAILED ]; then
+            echo "[BỎ QUA] release $TAG: có kiểm thử lỗi" >> ci-logs/summary.txt
+          elif gh release view "$TAG" > /dev/null 2>&1; then
+            echo "[BỎ QUA] release $TAG đã có - tăng __version__ để đăng bản mới" >> ci-logs/summary.txt
           else
             gh release create "$TAG" $FILES --target "$GITHUB_SHA" --title "Glossa $VER" \
               --notes-file packaging/RELEASE_NOTES.md --latest
+            echo "[OK] release $TAG" >> ci-logs/summary.txt
           fi
-          echo "[OK] release $TAG" >> ci-logs/summary.txt
 
       - name: Save logs to ci-logs branch
         if: always()

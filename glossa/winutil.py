@@ -111,10 +111,29 @@ def get_window_rect(hwnd: int):
     return (r.left, r.top, r.right - r.left, r.bottom - r.top)
 
 
+_mta_cookie = None
+
+
+def keep_mta_alive() -> None:
+    """Giữ "căn hộ" COM MTA sống suốt đời tiến trình. Nếu không, khi luồng OCR cuối cùng kết thúc,
+    Windows gỡ thư viện OCR khỏi bộ nhớ trong khi lớp WinRT vẫn giữ con trỏ tới nó => luồng OCR mở
+    sau đó (tải lại OCR, mở lại chương trình trong cùng tiến trình) bị sập (access violation)."""
+    global _mta_cookie
+    if not IS_WIN or _mta_cookie is not None:
+        return
+    try:
+        cookie = ctypes.c_void_p()
+        if ctypes.windll.ole32.CoIncrementMTAUsage(ctypes.byref(cookie)) == 0:  # S_OK
+            _mta_cookie = cookie
+    except Exception:
+        pass
+
+
 def com_init_mta() -> None:
     """Khởi tạo COM kiểu MTA cho luồng hiện tại (cần cho Windows OCR)."""
     if not IS_WIN:
         return
+    keep_mta_alive()
     try:
         ctypes.windll.ole32.CoInitializeEx(None, 0)  # COINIT_MULTITHREADED
     except Exception:
