@@ -45,7 +45,7 @@ DEFAULTS = {
     "dub_auto_speed": True,            # tự tăng tốc khi câu dài để bắt kịp video
     "dub_volume": 0.85,                # âm lượng thuyết minh (0.0..1.0)
     "dub_anti_echo": True,             # tạm ngắt thu loa khi đang đọc thuyết minh để tránh dội tiếng
-    "voice_pace": "balanced",          # "fast" | "balanced" | "accurate"
+    "voice_pace": "fast",              # "ultra" | "fast" | "balanced" | "accurate"
     "voice_sensitivity": 0.015,        # ngưỡng phát hiện giọng nói (RMS)
     "voice_max_chunk_s": 5.5,          # độ dài tối đa mỗi đoạn nói (giây)
     "voice_silence_s": 0.65,           # khoảng lặng để kết thúc câu (giây)

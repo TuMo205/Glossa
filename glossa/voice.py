@@ -4,15 +4,18 @@ dịch sang ngôn ngữ đích, đọc bản dịch (TTS) và xuất phụ đề
 from __future__ import annotations
 
 import io
+import json
 import logging
 import queue
 import threading
 import time
 import wave
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
+import requests
 
 from .dubbing import DubbingEngine
 from .translator import SKIP
@@ -41,9 +44,10 @@ VOICE_SOURCES = [
 ]
 
 VOICE_PACES = [
-    ("fast", "Nhanh — Video / Livestream (3,2 giây)", 3.2, 0.45),
-    ("balanced", "Cân bằng — Phim / YouTube (4,8 giây)", 4.8, 0.60),
-    ("accurate", "Chính xác — Bài giảng / Họp (6,5 giây)", 6.5, 0.80),
+    ("ultra", "Siêu nhanh — Livestream / Video nhanh (2,0 giây)", 2.0, 0.28),
+    ("fast", "Nhanh — YouTube / Phim (2,8 giây)", 2.8, 0.38),
+    ("balanced", "Cân bằng — Phim / Hội thoại (4,0 giây)", 4.0, 0.50),
+    ("accurate", "Chính xác — Bài giảng / Họp (5,8 giây)", 5.8, 0.70),
 ]
 _PACE_MAP = {k: (mx, sil) for k, _lbl, mx, sil in VOICE_PACES}
 
@@ -135,10 +139,65 @@ def list_audio_devices(source: str = "loopback") -> list[tuple[str, str]]:
     return out
 
 
-def recognize_pcm(pcm: bytes, lang: str = "en-US", sample_rate: int = TARGET_SR) -> str:
-    """Nhận dạng giọng nói từ PCM 16-bit mono qua Google Speech Recognition."""
+_STT_SESSION = requests.Session()
+_STT_URL_CACHE: dict[str, str] = {}
+
+
+def _google_stt_url(lang: str) -> str:
+    url = _STT_URL_CACHE.get(lang)
+    if url:
+        return url
+    from speech_recognition.recognizers import google as sr_google
+
+    rb = sr_google.create_request_builder(
+        endpoint="http://www.google.com/speech-api/v2/recognize",
+        key=None,
+        language=lang,
+        filter_level=0,
+    )
+    url = rb.build_url().replace("http://", "https://")
+    _STT_URL_CACHE[lang] = url
+    return url
+
+
+def _parse_google_stt(body: str) -> str:
+    """Đọc JSON nhiều dòng của Google Speech API v2 -> câu nhận dạng tốt nhất."""
+    best = ""
+    for line in (body or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        results = obj.get("result") or []
+        for res in results:
+            alts = res.get("alternative") or []
+            if alts and isinstance(alts[0], dict) and alts[0].get("transcript"):
+                best = str(alts[0]["transcript"]).strip()
+    return best
+
+
+def recognize_pcm(pcm: bytes, lang: str = "en-US", sample_rate: int = TARGET_SR, session=None) -> str:
+    """Nhận dạng giọng nói tốc độ cao: gửi thẳng PCM 16-bit qua HTTPS keep-alive (~180ms, không gọi flac.exe)."""
     if not pcm:
         return ""
+    sess = session or _STT_SESSION
+    try:
+        url = _google_stt_url(lang)
+        r = sess.post(
+            url,
+            data=pcm,
+            headers={"Content-Type": f"audio/l16; rate={sample_rate}"},
+            timeout=(4, 8),
+        )
+        if r.status_code == 200:
+            return _parse_google_stt(r.text)
+        log.debug("Direct STT HTTP %s, chuyển sang SpeechRecognition", r.status_code)
+    except Exception as e:
+        log.debug("Direct STT lỗi (%s), chuyển sang SpeechRecognition", e)
+
     try:
         import speech_recognition as sr
     except ImportError as e:
@@ -171,6 +230,9 @@ class VoiceEngine:
         self._cap_thread = None
         self._stt_thread = None
         self._stt_q: queue.Queue = queue.Queue(maxsize=4)
+        self._stt_pool: ThreadPoolExecutor | None = None
+        self._seq_counter = 0
+        self._last_emitted_seq = 0
         self.dubbing = DubbingEngine(cfg, on_error=self._emit_error)
         self._session_t0 = 0.0
         self._history: list[SubtitleEntry] = []
@@ -202,6 +264,9 @@ class VoiceEngine:
             self._running = True
             self.last_error = None
             self._session_t0 = time.monotonic()
+            self._seq_counter = 0
+            self._last_emitted_seq = 0
+            self._stt_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="voice-stt")
             # dọn hàng đợi cũ
             while not self._stt_q.empty():
                 try:
@@ -209,7 +274,7 @@ class VoiceEngine:
                 except queue.Empty:
                     break
             self._cap_thread = threading.Thread(target=self._capture_loop, name="voice-capture", daemon=True)
-            self._stt_thread = threading.Thread(target=self._stt_loop, name="voice-stt", daemon=True)
+            self._stt_thread = threading.Thread(target=self._stt_loop, name="voice-stt-dispatch", daemon=True)
             self._cap_thread.start()
             self._stt_thread.start()
             return True
@@ -302,6 +367,7 @@ class VoiceEngine:
         silence_acc = 0.0
         speech_acc = 0.0
         speech_start_t = 0.0
+        speech_peak = 0.0
         last_level_emit = 0.0
 
         try:
@@ -339,18 +405,23 @@ class VoiceEngine:
                         self.on_level(min(1.0, rms * 6.0))
 
                     thresh = float(self.cfg.get("voice_sensitivity", 0.015))
-                    pace = self.cfg.get("voice_pace", "balanced")
+                    pace = self.cfg.get("voice_pace", "fast")
                     max_chunk, silence_limit = _PACE_MAP.get(
                         pace,
-                        (float(self.cfg.get("voice_max_chunk_s", 4.8)), float(self.cfg.get("voice_silence_s", 0.60))),
+                        (float(self.cfg.get("voice_max_chunk_s", 2.8)), float(self.cfg.get("voice_silence_s", 0.38))),
                     )
 
-                    if rms >= thresh:
+                    # Ngưỡng nhận biết khoảng ngắt giữa câu kể cả khi phim có nhạc nền
+                    dip_thresh = max(thresh, speech_peak * 0.28) if speaking else thresh
+                    if rms >= dip_thresh:
                         if not speaking:
                             speaking = True
                             speech_start_t = max(0.0, now - self._session_t0 - 0.35)
+                            speech_peak = rms
                             buf = list(pre_roll)
                             speech_acc = len(buf) * frame_s
+                        else:
+                            speech_peak = max(speech_peak * 0.96, rms)
                         buf.append(samples)
                         speech_acc += frame_s
                         silence_acc = 0.0
@@ -362,15 +433,17 @@ class VoiceEngine:
                             silence_acc += frame_s
 
                     if speaking and (silence_acc >= silence_limit or speech_acc >= max_chunk):
-                        if speech_acc >= 0.45:
+                        if speech_acc >= 0.40:
                             audio_mono = np.concatenate(buf)
                             pcm = resample_to_pcm16(audio_mono, rate, TARGET_SR)
-                            end_t = max(speech_start_t + 0.5, now - self._session_t0)
-                            self._enqueue_stt((pcm, speech_start_t, end_t))
+                            end_t = max(speech_start_t + 0.4, now - self._session_t0)
+                            self._seq_counter += 1
+                            self._enqueue_stt((self._seq_counter, pcm, speech_start_t, end_t))
                         buf = []
                         speaking = False
                         silence_acc = 0.0
                         speech_acc = 0.0
+                        speech_peak = 0.0
         except Exception as e:
             if self._running:
                 self._emit_error(f"Không mở được thiết bị âm thanh: {e}")
@@ -391,6 +464,11 @@ class VoiceEngine:
             pass
 
     def _stt_loop(self) -> None:
+        # Làm ấm kết nối TLS Google Speech để câu đầu tiên hiện nhanh nhất
+        try:
+            recognize_pcm(b"\x00" * 3200, lang=self.cfg.get("voice_lang", "en-US"))
+        except Exception:
+            pass
         while self._running:
             try:
                 item = self._stt_q.get(timeout=0.4)
@@ -398,39 +476,55 @@ class VoiceEngine:
                 continue
             if item is None or not self._running:
                 break
-            pcm, start_s, end_s = item
-            lang = self.cfg.get("voice_lang", "en-US")
-            if self.on_status:
-                self.on_status("Đang nhận dạng & dịch câu vừa nói…")
-            try:
-                text = recognize_pcm(pcm, lang=lang, sample_rate=TARGET_SR)
-            except Exception as e:
-                self._emit_error(str(e))
-                continue
-            if not text:
-                if self.on_status and self._running:
-                    self.on_status(f"Đang nghe: {self.active_device}")
-                continue
-            translated = self._translate_text(text)
+            pool = self._stt_pool
+            if pool is not None:
+                pool.submit(self._process_chunk, item)
+        pool = self._stt_pool
+        if pool is not None:
+            pool.shutdown(wait=False)
+            self._stt_pool = None
+
+    def _process_chunk(self, item) -> None:
+        if not self._running:
+            return
+        seq, pcm, start_s, end_s = item
+        lang = self.cfg.get("voice_lang", "en-US")
+        if self.on_status:
+            self.on_status("Đang nhận dạng & dịch…")
+        try:
+            text = recognize_pcm(pcm, lang=lang, sample_rate=TARGET_SR)
+        except Exception as e:
+            self._emit_error(str(e))
+            return
+        if not text or not self._running:
             if self.on_status and self._running:
                 self.on_status(f"Đang nghe: {self.active_device}")
-            with self._lock:
-                entry = SubtitleEntry(
-                    index=self._next_idx,
-                    start_s=start_s,
-                    end_s=end_s,
-                    original=text,
-                    translated=translated,
-                    lang=lang,
-                )
-                self._next_idx += 1
-                self._history.append(entry)
-                if len(self._history) > 500:
-                    self._history = self._history[-500:]
-            if self.on_subtitle:
-                self.on_subtitle(entry)
-            if self.cfg.get("voice_tts", False) and translated:
-                self.dubbing.speak(translated, target_lang=self.cfg.get("target_lang", "vi"))
+            return
+        translated = self._translate_text(text)
+        if not self._running:
+            return
+        if self.on_status:
+            self.on_status(f"Đang nghe: {self.active_device}")
+        with self._lock:
+            if seq < self._last_emitted_seq:
+                return  # bỏ qua câu cũ đến trễ hơn câu mới
+            self._last_emitted_seq = seq
+            entry = SubtitleEntry(
+                index=self._next_idx,
+                start_s=start_s,
+                end_s=end_s,
+                original=text,
+                translated=translated,
+                lang=lang,
+            )
+            self._next_idx += 1
+            self._history.append(entry)
+            if len(self._history) > 500:
+                self._history = self._history[-500:]
+        if self.on_subtitle:
+            self.on_subtitle(entry)
+        if self.cfg.get("voice_tts", False) and translated:
+            self.dubbing.speak(translated, target_lang=self.cfg.get("target_lang", "vi"))
 
     def _translate_text(self, text: str) -> str:
         cached = self.translator.cache.get(text)
