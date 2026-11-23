@@ -1,0 +1,2 @@
+1f53bd2ac947584c2071b6ca980d749d891acd43d3a7c606387ee87471cbdc22  Glossa-Portable-2.1.0.zip
+1032f2facc26bd0bf5bbc1c3bb439811dbb4ff01baec87d59a41cc23b3eba1b2  Glossa-Setup-2.1.0.exe

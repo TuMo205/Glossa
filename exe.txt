@@ -1,0 +1,8 @@
+> C:\hostedtoolcache\windows\Python\3.13.17\x64\python.exe -m PyInstaller --noconfirm --clean --log-level WARN --distpath D:\a\Glossa\Glossa\dist --workpath D:\a\Glossa\Glossa\build\pyinstaller D:\a\Glossa\Glossa\packaging\Glossa.spec
+179 INFO: PyInstaller: 6.22.3, contrib hooks: 2026.10
+179 INFO: Python: 3.13.17
+201 INFO: Platform: Windows-2025Server-10.0.26100-SP0
+201 INFO: Python environment: C:\hostedtoolcache\windows\Python\3.13.17\x64
+41405 WARNING: Hidden import "pycparser.lextab" not found!
+41406 WARNING: Hidden import "pycparser.yacctab" not found!
+OK: D:\a\Glossa\Glossa\dist\Glossa (163 MB)

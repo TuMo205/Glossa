@@ -1,0 +1,9 @@
+Glossa 2.1.0 - Python 3.13.17 - win32
+[OK] test (5 s)
+[OK] icon (1 s)
+[OK] exe (46 s)
+[OK] smoke (17 s)
+[OK] installer (30 s)
+[OK] portable (18 s)
+[OK] checksums (0 s)
+[BỎ QUA] release v2.1.0 đã có - tăng __version__ để đăng bản mới
