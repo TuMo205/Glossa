@@ -24,12 +24,14 @@ from .overlay import OsdWindow, OverlayWindow
 from .panel import INTERVALS, STYLES, ControlPanel
 from .selector import SelectionSession
 from .langdialog import SCRIPT_NAMES, LanguageDialog
+from .subtitle import SubtitleWindow
 from .translator import PROVIDER_NAMES, TARGETS, TranslationCache, Translator
+from .voice import VoiceEngine
 
 log = logging.getLogger(__name__)
 
-# Bridge không bao giờ bị huỷ: luồng nền (OCR, dịch, phím tắt) có thể còn phát tín hiệu thêm một nhịp
-# sau khi Controller đóng; phát tín hiệu từ đối tượng Qt đã huỷ làm chương trình sập (access violation).
+# Bridge không bao giờ bị huỷ: luồng nền (OCR, dịch, phím tắt, giọng nói) có thể còn phát tín hiệu
+# thêm một nhịp sau khi Controller đóng; giữ tham chiếu tránh access violation.
 _BRIDGES: list = []
 
 
@@ -44,6 +46,10 @@ class Bridge(QObject):
     hotkey = Signal(str)
     hide_req = Signal()
     show_req = Signal()
+    voice_subtitle = Signal(object)
+    voice_level = Signal(float)
+    voice_status = Signal(str)
+    voice_error = Signal(str)
 
 
 class Sink:
@@ -91,6 +97,7 @@ class Controller(QObject):
         self.app_py = app_py
         self.active = not cfg.get("start_paused", False)
         self.hidden = False
+        self.voice_active = False
         self.ocr_state = {"available": [], "active": [], "error": None}
         self.status_info: dict = {}
         self.overlays: dict = {}
@@ -116,6 +123,14 @@ class Controller(QObject):
         self.hotkeys = HotkeyThread(self.hotkey_map(), b.hotkey.emit)
         self.panel = None
         self.osd = OsdWindow()
+        self.subtitle = SubtitleWindow(cfg, on_option_changed=self._refresh_ui)
+        self.voice = VoiceEngine(
+            cfg, self.translator,
+            on_subtitle=b.voice_subtitle.emit,
+            on_level=b.voice_level.emit,
+            on_status=b.voice_status.emit,
+            on_error=b.voice_error.emit,
+        )
 
         b.blocks.connect(self._on_blocks)
         b.ocr_info.connect(self._on_ocr_info)
@@ -125,6 +140,10 @@ class Controller(QObject):
         b.hotkey.connect(self._on_hotkey)
         b.hide_req.connect(self._hide_for_capture)
         b.show_req.connect(self._show_after_capture)
+        b.voice_subtitle.connect(self._on_voice_subtitle)
+        b.voice_level.connect(self._on_voice_level)
+        b.voice_status.connect(self._on_voice_status)
+        b.voice_error.connect(self._on_voice_error)
 
         self._relayout_timer = QTimer(self, singleShot=True, interval=50, timeout=self._relayout_all)
         self._rebuild_timer = QTimer(self, singleShot=True, interval=900, timeout=self._rebuild_overlays)
@@ -275,6 +294,65 @@ class Controller(QObject):
     def toggle_active(self) -> None:
         self.set_active(not self.active)
 
+    def set_voice_active(self, on: bool, osd: bool = True) -> None:
+        on = bool(on)
+        if on == self.voice_active:
+            return
+        self.voice_active = on
+        if on:
+            self.voice.start()
+            self.subtitle.show_listening(True)
+        else:
+            self.voice.stop()
+            self.subtitle.show_listening(False)
+        self._refresh_ui()
+        if osd:
+            self._osd("🎙 Đang dịch giọng nói & Vietsub" if on else "Đã tắt dịch giọng nói & Vietsub")
+
+    def toggle_voice(self) -> None:
+        self.set_voice_active(not self.voice_active)
+
+    def restart_voice_if_active(self) -> None:
+        if self.voice_active:
+            self.voice.stop()
+            self.voice.start()
+
+    def set_subtitle_option(self, key: str, value) -> None:
+        self.cfg.set(key, value)
+        if key == "subtitle_enabled":
+            self.subtitle.show_listening(self.voice_active and bool(value))
+        else:
+            self.subtitle.apply_style()
+
+    def reset_subtitle_position(self) -> None:
+        self.subtitle.reset_position()
+        self._osd("Đã đặt lại vị trí thanh phụ đề Vietsub")
+
+    def test_dub_voice(self) -> None:
+        self.voice.dubbing.test_voice()
+
+    def _on_voice_subtitle(self, entry) -> None:
+        self.subtitle.show_subtitle(entry.original, entry.translated)
+        if self.panel is not None:
+            self.panel.append_transcript(entry)
+
+    def _on_voice_level(self, level: float) -> None:
+        if self.panel is not None and self.panel.isVisible():
+            self.panel.set_voice_level(level)
+
+    def _on_voice_status(self, text: str) -> None:
+        if self.panel is not None:
+            self.panel.set_voice_status(text)
+
+    def _on_voice_error(self, msg: str) -> None:
+        self.voice_active = self.voice.running
+        if not self.voice_active:
+            self.subtitle.show_listening(False)
+        if self.panel is not None:
+            self.panel.set_voice_status(f"Lỗi: {msg}")
+        self._refresh_ui()
+        self.tray.showMessage("Dịch giọng nói & Vietsub", msg[:200], QSystemTrayIcon.MessageIcon.Warning, 6000)
+
     def toggle_hidden(self) -> None:
         self.hidden = not self.hidden
         for ov in self.overlays.values():
@@ -348,6 +426,10 @@ class Controller(QObject):
             self._update_targets()
         elif key == "persist_cache" and value:
             self.cache.dirty = True
+        elif key == "voice_tts":
+            if not value:
+                self.voice.dubbing.stop_current()
+            self._refresh_ui()
 
     def hotkey_map(self) -> dict:
         hk = dict(DEFAULTS["hotkeys"])
@@ -400,7 +482,8 @@ class Controller(QObject):
         seen = [SCRIPT_NAMES.get(sc, sc) for sc in self.engine.seen_scripts()]
         err = self.translator.last_error
         tr = f"lỗi dịch ({err[:30]})" if err else PROVIDER_NAMES.get(self.translator.active_provider, "")
-        return (f"{state}\nĐọc được: {langs}" + (f" • đang thấy: {', '.join(seen)}" if seen else "")
+        voice_part = " • 🎙 Vietsub đang bật" if self.voice_active else ""
+        return (f"{state}{voice_part}\nĐọc được: {langs}" + (f" • đang thấy: {', '.join(seen)}" if seen else "")
                 + f"\n{tr} • nhớ {len(self.cache)} bản dịch")
 
     def show_panel(self) -> None:
@@ -532,10 +615,12 @@ class Controller(QObject):
         self.save_cache()
         self.sink.close()
         self.translator.on_update = self.translator.on_error = None
+        self.voice.shutdown()
+        self.subtitle.close()
         self.engine.stop()
         self.translator.stop()
         self.hotkeys.stop()
-        for t, sec in ((self.engine, 3.0), (self.translator.thread, 1.0), (self.hotkeys, 1.5)):
+        for t, sec in ((self.engine, 3.0), (getattr(self.translator, "thread", None), 1.0), (self.hotkeys, 1.5)):
             if t is not None and t.is_alive():
                 t.join(sec)
                 if t.is_alive():
@@ -557,6 +642,7 @@ class Controller(QObject):
             "hide": self.toggle_hidden,
             "region": self.start_region_select,
             "fullscreen": self.set_fullscreen,
+            "voice": self.toggle_voice,
             "panel": self.show_panel,
             "quit": self.quit,
         }.get(name, lambda: None)()
@@ -622,6 +708,12 @@ class Controller(QObject):
         self.act_active = m.addAction(f"Bật dịch tiếng Việt\t{hk.get('toggle', '')}")
         self.act_active.setCheckable(True)
         self.act_active.triggered.connect(lambda checked: self.set_active(checked))
+        self.act_voice = m.addAction(f"Bật dịch giọng nói & Vietsub\t{hk.get('voice', '')}")
+        self.act_voice.setCheckable(True)
+        self.act_voice.triggered.connect(lambda checked: self.set_voice_active(checked))
+        self.act_dub = m.addAction("Bật thuyết minh AI (lồng tiếng)")
+        self.act_dub.setCheckable(True)
+        self.act_dub.triggered.connect(lambda checked: self.set_option("voice_tts", bool(checked)))
         self.act_hidden = m.addAction(f"Ẩn bản dịch\t{hk.get('hide', '')}")
         self.act_hidden.setCheckable(True)
         self.act_hidden.triggered.connect(lambda _c: self.toggle_hidden())
@@ -733,6 +825,8 @@ class Controller(QObject):
     def _refresh_ui(self) -> None:
         self.tray.setIcon(self.icon_on if self.active else self.icon_off)
         self.act_active.setChecked(self.active)
+        self.act_voice.setChecked(self.voice_active)
+        self.act_dub.setChecked(bool(self.cfg.get("voice_tts", False)))
         self.act_hidden.setChecked(self.hidden)
         region_mode = self.cfg.get("mode") == "region" and bool(self.cfg.get("region"))
         self.act_region.setChecked(region_mode)

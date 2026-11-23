@@ -29,13 +29,16 @@ Yêu cầu: Windows 10 (1809 trở lên) hoặc Windows 11, 64-bit, có Internet
 - **Nhẹ:** màn hình đứng yên thì gần như không tốn CPU; chỉ đọc lại phần màn hình vừa thay đổi.
 - **Bảng điều khiển kiểu Unikey:** biểu tượng **V đỏ** = đang dịch, **E xanh** = tạm dừng. Nhấp một lần
   để bật/tắt, nhấp đúp để mở bảng điều khiển.
+- **Dịch giọng nói, phụ đề Vietsub & Thuyết minh AI thời gian thực:** thu âm trực tiếp từ **âm thanh hệ thống (Loa/Video/Phim qua WASAPI Loopback)** hoặc **Microphone**, nhận dạng giọng nói, hiển thị thanh phụ đề **Vietsub nổi** kiểu phim (hỗ trợ song ngữ, kéo thả vị trí, khoá xuyên chuột, xuất `.srt`) và **Thuyết minh AI tiếng Việt tự nhiên** (giọng nữ Hoài My / giọng nam Nam Minh qua Edge Neural TTS, chỉnh tốc độ, âm lượng, có chống dội tiếng loa).
+- **Giao diện hiện đại (Sáng / Tối):** thiết kế dạng thẻ bo tròn, chia tab *Dịch màn hình* và *Giọng nói & Vietsub* trực quan, chuyển đổi nhanh Dark/Light mode.
 - Khoanh một vùng để chỉ dịch vùng đó (phụ đề, khung chat, game).
 
 ## Phím tắt
 
 | Phím | Tác dụng |
 |---|---|
-| **Ctrl+Alt+T** | Bật / tạm dừng dịch |
+| **Ctrl+Alt+T** | Bật / tạm dừng dịch màn hình |
+| **Ctrl+Alt+V** | Bật / tắt dịch giọng nói & Vietsub |
 | **Ctrl+Alt+H** | Ẩn / hiện bản dịch |
 | **Ctrl+Alt+R** | Chỉ dịch một vùng |
 | **Ctrl+Alt+F** | Dịch toàn màn hình |

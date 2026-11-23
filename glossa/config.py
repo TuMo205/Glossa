@@ -35,11 +35,34 @@ DEFAULTS = {
     "start_paused": False,
     "show_panel_on_start": True,       # mở bảng điều khiển khi khởi động (như Unikey)
     "panel_expanded": False,           # bảng điều khiển đang mở rộng
+    "ui_theme": "dark",                # "dark" | "light"
+    "voice_source": "loopback",        # "loopback" (âm thanh hệ thống) | "mic" (microphone)
+    "voice_device": "",                # tên thiết bị (rỗng = mặc định)
+    "voice_lang": "en-US",             # ngôn ngữ giọng nói đầu vào
+    "voice_tts": False,                # bật thuyết minh (lồng tiếng AI)
+    "dub_voice": "vi-VN-HoaiMyNeural", # giọng đọc thuyết minh AI
+    "dub_rate": "+15%",                # tốc độ đọc thuyết minh
+    "dub_auto_speed": True,            # tự tăng tốc khi câu dài để bắt kịp video
+    "dub_volume": 0.85,                # âm lượng thuyết minh (0.0..1.0)
+    "dub_anti_echo": True,             # tạm ngắt thu loa khi đang đọc thuyết minh để tránh dội tiếng
+    "voice_pace": "balanced",          # "fast" | "balanced" | "accurate"
+    "voice_sensitivity": 0.015,        # ngưỡng phát hiện giọng nói (RMS)
+    "voice_max_chunk_s": 5.5,          # độ dài tối đa mỗi đoạn nói (giây)
+    "voice_silence_s": 0.65,           # khoảng lặng để kết thúc câu (giây)
+    "subtitle_enabled": True,          # hiện thanh phụ đề Vietsub nổi
+    "subtitle_bilingual": True,        # hiện song ngữ (gốc + dịch)
+    "subtitle_font_size": 24,          # cỡ chữ phụ đề (px)
+    "subtitle_opacity": 0.84,          # độ mờ nền phụ đề (0.0..1.0)
+    "subtitle_color": "#FFFFFF",       # màu chữ phụ đề
+    "subtitle_locked": False,          # khoá xuyên chuột cho thanh phụ đề
+    "subtitle_hide_s": 7.0,            # tự ẩn phụ đề sau N giây im lặng
+    "subtitle_pos": None,              # [x, y] vị trí đã kéo, None = giữa dưới màn hình
     "hotkeys": {
         "toggle": "Ctrl+Alt+T",
         "hide": "Ctrl+Alt+H",
         "region": "Ctrl+Alt+R",
         "fullscreen": "Ctrl+Alt+F",
+        "voice": "Ctrl+Alt+V",
         "panel": "Ctrl+Alt+P",
         "quit": "Ctrl+Alt+Q",
     },

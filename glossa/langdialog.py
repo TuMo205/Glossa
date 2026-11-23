@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from . import winutil
 from . import paths
+from .theme import build_stylesheet
 
 # (mã gói OCR của Windows, tên, hệ chữ)
 OCR_LANGS = [
@@ -150,7 +151,11 @@ class LanguageDialog(QDialog):
         v.addLayout(row)
 
         self._tail = QTimer(self, interval=800, timeout=self._tail_log)
+        self.apply_theme()
         self.refresh()
+
+    def apply_theme(self) -> None:
+        self.setStyleSheet(build_stylesheet(self.ctl.cfg.get("ui_theme", "dark")))
 
     def refresh(self) -> None:
         available = self.ctl.ocr_state.get("available") or []

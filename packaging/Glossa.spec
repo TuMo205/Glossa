@@ -13,7 +13,7 @@ from glossa import APP_ID, APP_NAME, PUBLISHER, __version__  # noqa: E402
 ICON = os.path.join(ROOT, "build", "glossa.ico")
 
 # winrt (Windows OCR): nhiều module được nạp động (importlib / từ mã C) => khai báo hết
-hidden = ["PySide6.QtNetwork"]
+hidden = ["PySide6.QtNetwork", "speech_recognition", "soundcard", "edge_tts"]
 binaries = []
 if sys.platform == "win32":
     import winrt._winrt
