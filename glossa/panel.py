@@ -934,7 +934,7 @@ class ControlPanel(QDialog):
             self.ck_dub_auto_speed.setChecked(bool(self.cfg.get("dub_auto_speed", True)))
             self.ck_dub_anti_echo.setChecked(bool(self.cfg.get("dub_anti_echo", True)))
             self.cb_dub_voice.setCurrentIndex(
-                max(0, self.cb_dub_voice.findData(self.cfg.get("dub_voice", "vi-VN-HoaiMyNeural")))
+                max(0, self.cb_dub_voice.findData(self.cfg.get("dub_voice", "google_tts")))
             )
             self.cb_dub_rate.setCurrentIndex(
                 max(0, self.cb_dub_rate.findData(self.cfg.get("dub_rate", "+15%")))

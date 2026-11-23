@@ -1,32 +1,42 @@
 """Bộ thuyết minh (lồng tiếng AI) cho Glossa.
 
-- Dùng Microsoft Edge Neural TTS (edge-tts) cho giọng tiếng Việt tự nhiên (Hoài My / Nam Minh)
-  và nhiều ngôn ngữ khác; tự dự phòng sang Windows SAPI / pyttsx3 khi ngoại tuyến.
-- Phát âm thanh bằng Windows MCI (winmm.dll) không cần thêm thư viện nặng, hỗ trợ chỉnh
-  âm lượng và ngắt ngay lập tức.
-- Cung cấp cờ `is_speaking` + thời điểm kết thúc để VoiceEngine chống dội tiếng khi thu
-  âm thanh hệ thống (WASAPI Loopback).
+- Ưu tiên Google TTS (tiếng Việt rõ ràng, ổn định, không phụ thuộc token) và hỗ trợ thêm
+  Microsoft Edge Neural TTS (Hoài My / Nam Minh) với tự động dự phòng sang Google TTS.
+- Dự phòng ngoại tuyến qua Windows System.Speech (PowerShell) hoạt động cả trong bản .exe.
+- Phát âm thanh bằng Windows MCI (winmm.dll), hỗ trợ chỉnh tốc độ, âm lượng và ngắt ngay.
+- Cung cấp cờ `is_speaking` + thời điểm kết thúc để VoiceEngine chống dội tiếng loa.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import ctypes
 import logging
 import os
 import queue
+import re
+import subprocess
 import sys
 import tempfile
 import threading
 import time
 import uuid
 
+import requests
+
 log = logging.getLogger(__name__)
 
+UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+)
+
 DUB_VOICES = [
+    ("google_tts", "Google TTS — Tự động theo ngôn ngữ (Ổn định nhất)"),
     ("vi-VN-HoaiMyNeural", "Tiếng Việt — Nữ (Hoài My AI)"),
     ("vi-VN-NamMinhNeural", "Tiếng Việt — Nam (Nam Minh AI)"),
-    ("auto", "Tự động theo ngôn ngữ đích (AI)"),
+    ("auto", "Tự động theo ngôn ngữ đích (Edge AI)"),
     ("sapi", "Giọng Windows có sẵn (Offline)"),
 ]
 
@@ -56,21 +66,23 @@ TARGET_DEFAULT_VOICES = {
 }
 
 SAMPLE_TEXTS = {
-    "vi": "Xin chào, đây là giọng thuyết minh tiếng Việt tự nhiên của Glossa.",
+    "vi": "Xin chào, đây là giọng thuyết minh tiếng Việt của Glossa.",
     "en": "Hello, this is Glossa AI dubbing voice.",
-    "ja": "こんにちは、これはGlossaのAI吹き替え音声です。",
-    "ko": "안녕하세요, Glossa AI 더빙 음성입니다.",
-    "zh-CN": "你好，这是 Glossa 的 AI 配音声音。",
+    "ja": "こんにちは、これはGlossaの吹き替え音声です。",
+    "ko": "안녕하세요, Glossa 더빙 음성입니다.",
+    "zh-CN": "你好，这是 Glossa 的配音声音。",
 }
 
 
 def resolve_voice(voice_setting: str, target_lang: str = "vi") -> str:
-    """Chọn mã giọng edge-tts phù hợp theo cấu hình và ngôn ngữ đích."""
-    v = (voice_setting or "vi-VN-HoaiMyNeural").strip()
-    if v == "sapi":
-        return "sapi"
+    """Chọn mã giọng phù hợp theo cấu hình và ngôn ngữ đích."""
+    v = (voice_setting or "google_tts").strip()
+    if v in ("google_tts", "sapi"):
+        return v
     if v == "auto":
-        return TARGET_DEFAULT_VOICES.get(target_lang, TARGET_DEFAULT_VOICES.get(target_lang.split("-")[0], "vi-VN-HoaiMyNeural"))
+        return TARGET_DEFAULT_VOICES.get(
+            target_lang, TARGET_DEFAULT_VOICES.get(target_lang.split("-")[0], "vi-VN-HoaiMyNeural")
+        )
     return v
 
 
@@ -88,6 +100,42 @@ def compute_effective_rate(base_rate: str, text: str, auto_speed: bool = True) -
             pct += 10
     pct = max(-30, min(65, pct))
     return f"+{pct}%" if pct >= 0 else f"{pct}%"
+
+
+def _rate_to_mci_speed(rate_str: str) -> int:
+    """'+15%' -> 1150 (1000 = tốc độ chuẩn của Windows MCI)."""
+    try:
+        pct = int(str(rate_str).replace("%", "").replace("+", "").strip())
+    except ValueError:
+        pct = 15
+    return max(700, min(1650, 1000 + pct * 10))
+
+
+def _split_tts_chunks(text: str, max_len: int = 180) -> list[str]:
+    """Chia câu dài thành các đoạn <= max_len ký tự cho Google TTS."""
+    text = re.sub(r"\s+", " ", (text or "").strip())
+    if len(text) <= max_len:
+        return [text] if text else []
+    parts: list[str] = []
+    cur = ""
+    for seg in re.split(r"(?<=[.!?;,。！？])\s*", text):
+        if not seg:
+            continue
+        if len(cur) + len(seg) + 1 <= max_len:
+            cur = f"{cur} {seg}".strip()
+        else:
+            if cur:
+                parts.append(cur)
+            while len(seg) > max_len:
+                cut = seg.rfind(" ", 0, max_len)
+                if cut <= 20:
+                    cut = max_len
+                parts.append(seg[:cut].strip())
+                seg = seg[cut:].strip()
+            cur = seg
+    if cur:
+        parts.append(cur)
+    return parts
 
 
 def _mci(cmd: str) -> tuple[int, str]:
@@ -114,6 +162,8 @@ class DubbingEngine:
         self._speaking = False
         self._last_end = 0.0
         self._lock = threading.Lock()
+        self._session = requests.Session()
+        self._session.headers["User-Agent"] = UA
         self._tmp_dir = tempfile.mkdtemp(prefix="glossa_dub_")
 
     @property
@@ -121,7 +171,6 @@ class DubbingEngine:
         return self._speaking
 
     def in_cooldown(self, cooldown_s: float = 0.45) -> bool:
-        """True khi đang phát thuyết minh hoặc vừa phát xong trong `cooldown_s` giây."""
         if self._speaking:
             return True
         return (time.monotonic() - self._last_end) < cooldown_s
@@ -136,7 +185,6 @@ class DubbingEngine:
             self._thread.start()
 
     def stop_current(self) -> None:
-        """Ngắt ngay câu đang đọc và xoá hàng đợi."""
         self._interrupt.set()
         while not self._q.empty():
             try:
@@ -179,9 +227,8 @@ class DubbingEngine:
             pass
 
     def test_voice(self) -> None:
-        """Đọc câu mẫu để người dùng nghe thử giọng, tốc độ và âm lượng."""
         lang = self.cfg.get("target_lang", "vi")
-        voice_cfg = self.cfg.get("dub_voice", "vi-VN-HoaiMyNeural")
+        voice_cfg = self.cfg.get("dub_voice", "google_tts")
         if voice_cfg.startswith("vi-VN"):
             sample = SAMPLE_TEXTS["vi"]
         else:
@@ -207,19 +254,67 @@ class DubbingEngine:
             text, target_lang = item
             if self._interrupt.is_set():
                 continue
-            voice = resolve_voice(self.cfg.get("dub_voice", "vi-VN-HoaiMyNeural"), target_lang)
+            voice = resolve_voice(self.cfg.get("dub_voice", "google_tts"), target_lang)
             base_rate = str(self.cfg.get("dub_rate", "+15%") or "+15%")
             rate = compute_effective_rate(base_rate, text, bool(self.cfg.get("dub_auto_speed", True)))
             volume = max(0.05, min(1.0, float(self.cfg.get("dub_volume", 0.85))))
 
             try:
-                if voice != "sapi" and self._speak_edge(text, voice, rate, volume):
-                    continue
-                self._speak_sapi(text)
+                if voice == "google_tts":
+                    if self._speak_google(text, target_lang, rate, volume):
+                        continue
+                    self._speak_sapi(text, volume)
+                elif voice == "sapi":
+                    self._speak_sapi(text, volume)
+                else:
+                    # Edge Neural TTS -> tự dự phòng sang Google TTS -> Windows SAPI
+                    if self._speak_edge(text, voice, rate, volume):
+                        continue
+                    if self._speak_google(text, target_lang, rate, volume):
+                        continue
+                    self._speak_sapi(text, volume)
             except Exception as e:
                 log.warning("Thuyết minh lỗi: %s", e)
                 if self.on_error:
                     self.on_error(str(e))
+
+    def _speak_google(self, text: str, target_lang: str, rate: str, volume: float) -> bool:
+        """Tải MP3 trực tiếp từ Google Translate TTS và phát bằng Windows MCI (chỉnh được tốc độ & âm lượng)."""
+        chunks = _split_tts_chunks(text, 180)
+        if not chunks:
+            return True
+        tl = (target_lang or "vi").strip()
+        speed_mci = _rate_to_mci_speed(rate)
+        played_any = False
+        for chunk in chunks:
+            if self._stop or self._interrupt.is_set():
+                return True
+            mp3_path = os.path.join(self._tmp_dir, f"gtts_{uuid.uuid4().hex[:10]}.mp3")
+            try:
+                r = self._session.get(
+                    "https://translate.google.com/translate_tts",
+                    params={"ie": "UTF-8", "client": "tw-ob", "tl": tl, "q": chunk},
+                    timeout=(5, 10),
+                )
+                if r.status_code != 200 or len(r.content) < 256:
+                    log.info("Google TTS HTTP %s (%d byte)", r.status_code, len(r.content))
+                    return played_any
+                with open(mp3_path, "wb") as f:
+                    f.write(r.content)
+                if self._stop or self._interrupt.is_set():
+                    return True
+                if self._play_mp3(mp3_path, volume, speed=speed_mci):
+                    played_any = True
+            except Exception as e:
+                log.info("Google TTS lỗi (%s)", e)
+                return played_any
+            finally:
+                try:
+                    if os.path.exists(mp3_path):
+                        os.remove(mp3_path)
+                except OSError:
+                    pass
+        return played_any
 
     def _speak_edge(self, text: str, voice: str, rate: str, volume: float) -> bool:
         try:
@@ -238,7 +333,7 @@ class DubbingEngine:
                 return True
             return self._play_mp3(mp3_path, volume)
         except Exception as e:
-            log.info("edge-tts không khả dụng (%s), chuyển sang giọng Windows", e)
+            log.info("edge-tts không khả dụng (%s), chuyển sang Google TTS", e)
             return False
         finally:
             try:
@@ -247,7 +342,7 @@ class DubbingEngine:
             except OSError:
                 pass
 
-    def _play_mp3(self, path: str, volume: float) -> bool:
+    def _play_mp3(self, path: str, volume: float, speed: int | None = None) -> bool:
         if sys.platform != "win32":
             return False
         alias = f"glossa_{uuid.uuid4().hex[:8]}"
@@ -259,6 +354,8 @@ class DubbingEngine:
         try:
             vol_mci = int(round(max(0.0, min(1.0, volume)) * 1000))
             _mci(f"setaudio {alias} volume to {vol_mci}")
+            if speed is not None and speed != 1000:
+                _mci(f"set {alias} speed {int(speed)}")
             err, _ = _mci(f"play {alias}")
             if err != 0:
                 return False
@@ -273,28 +370,27 @@ class DubbingEngine:
             _mci(f"close {alias}")
             self._set_speaking(False)
 
-    def _speak_sapi(self, text: str) -> None:
+    def _speak_sapi(self, text: str, volume: float = 0.85) -> None:
+        """Dự phòng ngoại tuyến bằng Windows System.Speech (hoạt động cả trong bản .exe)."""
+        if sys.platform != "win32":
+            return
         self._set_speaking(True)
         try:
-            try:
-                import pyttsx3
-
-                eng = pyttsx3.init()
-                eng.setProperty("rate", 190)
-                eng.setProperty("volume", float(self.cfg.get("dub_volume", 0.85)))
-                eng.say(text)
-                eng.runAndWait()
-                return
-            except Exception:
-                pass
-            if sys.platform == "win32":
-                try:
-                    import win32com.client
-
-                    sapi = win32com.client.Dispatch("SAPI.SpVoice")
-                    sapi.Volume = int(round(float(self.cfg.get("dub_volume", 0.85)) * 100))
-                    sapi.Speak(text)
-                except Exception:
-                    pass
+            safe = text.replace("'", "''")
+            vol = int(round(max(10, min(100, volume * 100))))
+            ps = (
+                "Add-Type -AssemblyName System.Speech; "
+                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                f"$s.Volume = {vol}; $s.Rate = 1; $s.Speak('{safe}')"
+            )
+            enc = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
+            subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", enc],
+                capture_output=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                timeout=20,
+            )
+        except Exception as e:
+            log.debug("Windows SAPI lỗi: %s", e)
         finally:
             self._set_speaking(False)

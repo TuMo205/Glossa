@@ -40,7 +40,7 @@ DEFAULTS = {
     "voice_device": "",                # tên thiết bị (rỗng = mặc định)
     "voice_lang": "en-US",             # ngôn ngữ giọng nói đầu vào
     "voice_tts": False,                # bật thuyết minh (lồng tiếng AI)
-    "dub_voice": "vi-VN-HoaiMyNeural", # giọng đọc thuyết minh AI
+    "dub_voice": "google_tts",         # giọng đọc thuyết minh ("google_tts" | "vi-VN-HoaiMyNeural" | ...)
     "dub_rate": "+15%",                # tốc độ đọc thuyết minh
     "dub_auto_speed": True,            # tự tăng tốc khi câu dài để bắt kịp video
     "dub_volume": 0.85,                # âm lượng thuyết minh (0.0..1.0)
