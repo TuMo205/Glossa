@@ -164,16 +164,22 @@ class SubtitleWindow(QWidget):
             self._top_timer.stop()
             self.hide()
 
-    def show_subtitle(self, original: str, translated: str) -> None:
+    def show_subtitle(self, original: str, translated: str, interim: bool = False) -> None:
         if not self.cfg.get("subtitle_enabled", True):
             return
+        had_text = bool(self._translated) and not self._fading_out
         self._original = (original or "").strip()
         self._translated = (translated or original or "").strip()
         if not self._translated:
             return
         self._fading_out = False
-        self._fade_start = time.monotonic()
-        self._alpha = 0.15
+        if had_text:
+            # Đang có chữ trên thanh phụ đề -> cập nhật nối tiếp mượt mà, không nháy fade-in lại
+            self._alpha = 1.0
+        else:
+            self._fade_start = time.monotonic()
+            self._alpha = 0.25
+            self._anim_timer.start()
         if not self.isVisible():
             self._apply_geometry()
             self.show()
@@ -184,7 +190,6 @@ class SubtitleWindow(QWidget):
             h = self._compute_height(self.width())
             if h != self.height():
                 self.setGeometry(self.x(), max(0, old_bottom - h), self.width(), h)
-        self._anim_timer.start()
         self.update()
         hide_ms = max(2000, int(float(self.cfg.get("subtitle_hide_s", 7.0)) * 1000))
         self._hide_timer.start(hide_ms)

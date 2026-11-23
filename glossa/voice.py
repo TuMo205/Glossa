@@ -62,6 +62,7 @@ class SubtitleEntry:
     original: str
     translated: str
     lang: str
+    interim: bool = False
 
 
 def _fmt_srt_time(seconds: float) -> str:
@@ -368,6 +369,7 @@ class VoiceEngine:
         speech_acc = 0.0
         speech_start_t = 0.0
         speech_peak = 0.0
+        last_interim_t = 0.0
         last_level_emit = 0.0
 
         try:
@@ -418,6 +420,7 @@ class VoiceEngine:
                             speaking = True
                             speech_start_t = max(0.0, now - self._session_t0 - 0.35)
                             speech_peak = rms
+                            last_interim_t = now
                             buf = list(pre_roll)
                             speech_acc = len(buf) * frame_s
                         else:
@@ -432,13 +435,28 @@ class VoiceEngine:
                             speech_acc += frame_s
                             silence_acc += frame_s
 
+                    # Phụ đề tạm thời (Live Streaming): cập nhật ngay mỗi ~1.05s trong lúc người nói chưa dứt câu
+                    if (
+                        speaking
+                        and speech_acc >= 1.05
+                        and (now - last_interim_t) >= 1.05
+                        and speech_acc < (max_chunk - 0.45)
+                        and silence_acc < silence_limit
+                    ):
+                        last_interim_t = now
+                        snap = np.concatenate(buf)
+                        pcm = resample_to_pcm16(snap, rate, TARGET_SR)
+                        end_t = max(speech_start_t + 0.4, now - self._session_t0)
+                        self._seq_counter += 1
+                        self._enqueue_stt((self._seq_counter, pcm, speech_start_t, end_t, True))
+
                     if speaking and (silence_acc >= silence_limit or speech_acc >= max_chunk):
                         if speech_acc >= 0.40:
                             audio_mono = np.concatenate(buf)
                             pcm = resample_to_pcm16(audio_mono, rate, TARGET_SR)
                             end_t = max(speech_start_t + 0.4, now - self._session_t0)
                             self._seq_counter += 1
-                            self._enqueue_stt((self._seq_counter, pcm, speech_start_t, end_t))
+                            self._enqueue_stt((self._seq_counter, pcm, speech_start_t, end_t, False))
                         buf = []
                         speaking = False
                         silence_acc = 0.0
@@ -487,23 +505,24 @@ class VoiceEngine:
     def _process_chunk(self, item) -> None:
         if not self._running:
             return
-        seq, pcm, start_s, end_s = item
+        seq, pcm, start_s, end_s, is_interim = item
         lang = self.cfg.get("voice_lang", "en-US")
-        if self.on_status:
+        if self.on_status and not is_interim:
             self.on_status("Đang nhận dạng & dịch…")
         try:
             text = recognize_pcm(pcm, lang=lang, sample_rate=TARGET_SR)
         except Exception as e:
-            self._emit_error(str(e))
+            if not is_interim:
+                self._emit_error(str(e))
             return
         if not text or not self._running:
-            if self.on_status and self._running:
+            if self.on_status and self._running and not is_interim:
                 self.on_status(f"Đang nghe: {self.active_device}")
             return
         translated = self._translate_text(text)
         if not self._running:
             return
-        if self.on_status:
+        if self.on_status and not is_interim:
             self.on_status(f"Đang nghe: {self.active_device}")
         with self._lock:
             if seq < self._last_emitted_seq:
@@ -516,14 +535,16 @@ class VoiceEngine:
                 original=text,
                 translated=translated,
                 lang=lang,
+                interim=is_interim,
             )
-            self._next_idx += 1
-            self._history.append(entry)
-            if len(self._history) > 500:
-                self._history = self._history[-500:]
+            if not is_interim:
+                self._next_idx += 1
+                self._history.append(entry)
+                if len(self._history) > 500:
+                    self._history = self._history[-500:]
         if self.on_subtitle:
             self.on_subtitle(entry)
-        if self.cfg.get("voice_tts", False) and translated:
+        if not is_interim and self.cfg.get("voice_tts", False) and translated:
             self.dubbing.speak(translated, target_lang=self.cfg.get("target_lang", "vi"))
 
     def _translate_text(self, text: str) -> str:

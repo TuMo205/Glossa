@@ -332,8 +332,9 @@ class Controller(QObject):
         self.voice.dubbing.test_voice()
 
     def _on_voice_subtitle(self, entry) -> None:
-        self.subtitle.show_subtitle(entry.original, entry.translated)
-        if self.panel is not None:
+        is_interim = bool(getattr(entry, "interim", False))
+        self.subtitle.show_subtitle(entry.original, entry.translated, interim=is_interim)
+        if self.panel is not None and not is_interim:
             self.panel.append_transcript(entry)
 
     def _on_voice_level(self, level: float) -> None:
